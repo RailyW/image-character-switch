@@ -8,6 +8,28 @@ import {
 } from './constants';
 import type { AsciiOptions, AsciiResult, CharacterSetKey, ImageDimensions, ImageFrame } from './types';
 
+// HsvColor 接口：用于预处理阶段描述颜色的色相、饱和度和明度，便于识别绿色背景等彩色铺底。
+interface HsvColor {
+  hue: number;
+  saturation: number;
+  value: number;
+}
+
+// LINE_ART_PREPROCESSING 常量：集中保存线稿预处理的启发式阈值，避免魔法数字散落在逻辑中。
+const LINE_ART_PREPROCESSING = {
+  darkInkLuminance: 96,
+  softInkLuminance: 138,
+  brightBackgroundLuminance: 218,
+  paleBackgroundLuminance: 172,
+  lowSaturation: 0.24,
+  saturatedBackgroundLuminance: 118,
+  greenHueStart: 55,
+  greenHueEnd: 175,
+  weakEdgeMagnitude: 78,
+  mediumEdgeMagnitude: 130,
+  strongEdgeMagnitude: 210,
+} as const;
+
 // clampNumber 函数：把外部输入限制在安全范围内，避免 UI 或测试传入异常数值。
 export function clampNumber(value: number, min: number, max: number): number {
   // 这里处理 NaN 和 Infinity，确保后续数组索引和 Canvas 尺寸始终是有限数字。
@@ -32,6 +54,7 @@ export function normalizeAsciiOptions(options: AsciiOptions): AsciiOptions {
     columns: Math.round(clampNumber(options.columns, MIN_COLUMNS, profile.maxColumns)),
     quality: options.quality,
     inverted: options.inverted,
+    preprocessEnabled: Boolean(options.preprocessEnabled),
     characterSet: options.characterSet,
     edgeThreshold: Math.round(clampNumber(options.edgeThreshold, 8, 92)),
   };
@@ -71,6 +94,76 @@ export function calculateLuminance(red: number, green: number, blue: number): nu
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
 }
 
+// convertRgbToHsv 函数：把 RGB 颜色转换为 HSV，供预处理识别彩色背景和低饱和浅色区域。
+export function convertRgbToHsv(red: number, green: number, blue: number): HsvColor {
+  const normalizedRed = clampNumber(red / 255, 0, 1);
+  const normalizedGreen = clampNumber(green / 255, 0, 1);
+  const normalizedBlue = clampNumber(blue / 255, 0, 1);
+  const maxValue = Math.max(normalizedRed, normalizedGreen, normalizedBlue);
+  const minValue = Math.min(normalizedRed, normalizedGreen, normalizedBlue);
+  const delta = maxValue - minValue;
+
+  // 灰度颜色没有稳定色相，这里把 hue 固定为 0，后续主要依赖 saturation 判断。
+  if (delta === 0) {
+    return {
+      hue: 0,
+      saturation: 0,
+      value: maxValue,
+    };
+  }
+
+  let hue = 0;
+
+  // 根据最大通道落点计算色相角度，输出范围规整到 0-360。
+  if (maxValue === normalizedRed) {
+    hue = 60 * (((normalizedGreen - normalizedBlue) / delta) % 6);
+  } else if (maxValue === normalizedGreen) {
+    hue = 60 * ((normalizedBlue - normalizedRed) / delta + 2);
+  } else {
+    hue = 60 * ((normalizedRed - normalizedGreen) / delta + 4);
+  }
+
+  return {
+    hue: (hue + 360) % 360,
+    saturation: maxValue === 0 ? 0 : delta / maxValue,
+    value: maxValue,
+  };
+}
+
+// isGreenBackgroundHue 函数：判断颜色是否位于常见绿幕、草地、树叶虚化背景的色相范围内。
+export function isGreenBackgroundHue(hue: number): boolean {
+  return hue >= LINE_ART_PREPROCESSING.greenHueStart && hue <= LINE_ART_PREPROCESSING.greenHueEnd;
+}
+
+// shouldTreatAsBackground 函数：判断当前像素是否应在预处理中压成白色背景。
+export function shouldTreatAsBackground(luminance: number, hsv: HsvColor, edgeMagnitude: number): boolean {
+  const isBrightBackground = luminance >= LINE_ART_PREPROCESSING.brightBackgroundLuminance;
+  const isPaleBackground =
+    luminance >= LINE_ART_PREPROCESSING.paleBackgroundLuminance && hsv.saturation <= LINE_ART_PREPROCESSING.lowSaturation;
+  const isSoftGreenBackground =
+    isGreenBackgroundHue(hsv.hue) &&
+    hsv.saturation >= LINE_ART_PREPROCESSING.lowSaturation &&
+    luminance >= LINE_ART_PREPROCESSING.saturatedBackgroundLuminance &&
+    edgeMagnitude < LINE_ART_PREPROCESSING.mediumEdgeMagnitude;
+
+  // 高亮、低饱和浅色、柔和绿色铺底都优先视为空白，减少背景被字符密集铺满。
+  return isBrightBackground || isPaleBackground || isSoftGreenBackground;
+}
+
+// shouldKeepAsInk 函数：判断当前像素是否应在预处理中保留为黑色线稿。
+export function shouldKeepAsInk(luminance: number, hsv: HsvColor, edgeMagnitude: number): boolean {
+  const isDarkInk = luminance <= LINE_ART_PREPROCESSING.darkInkLuminance;
+  const isSoftDarkEdge =
+    luminance <= LINE_ART_PREPROCESSING.softInkLuminance && edgeMagnitude >= LINE_ART_PREPROCESSING.weakEdgeMagnitude;
+  const isStrongNeutralEdge =
+    hsv.saturation <= 0.55 &&
+    luminance <= LINE_ART_PREPROCESSING.paleBackgroundLuminance &&
+    edgeMagnitude >= LINE_ART_PREPROCESSING.strongEdgeMagnitude;
+
+  // 深色像素直接保留；较浅但边缘强的线条也保留，以照顾卡通图中的灰线和压缩抗锯齿。
+  return isDarkInk || isSoftDarkEdge || isStrongNeutralEdge;
+}
+
 // createLuminanceGrid 函数：把 RGBA 像素帧转换为一维亮度网格，供两种模式复用。
 export function createLuminanceGrid(frame: ImageFrame): Float32Array {
   const luminance = new Float32Array(frame.width * frame.height);
@@ -84,6 +177,36 @@ export function createLuminanceGrid(frame: ImageFrame): Float32Array {
   }
 
   return luminance;
+}
+
+// createPreprocessedLineArtFrame 函数：把彩色采样帧规整为白底黑线稿帧，降低背景色对 ASCII 输出的干扰。
+export function createPreprocessedLineArtFrame(frame: ImageFrame): ImageFrame {
+  const luminance = createLuminanceGrid(frame);
+  const outputData = new Uint8ClampedArray(frame.width * frame.height * 4);
+
+  for (let pixelIndex = 0; pixelIndex < luminance.length; pixelIndex += 1) {
+    const x = pixelIndex % frame.width;
+    const y = Math.floor(pixelIndex / frame.width);
+    const dataIndex = pixelIndex * 4;
+    const [red, green, blue] = composePixelOnWhite(frame.data, dataIndex);
+    const hsv = convertRgbToHsv(red, green, blue);
+    const edge = calculateSobelAt(luminance, frame.width, frame.height, x, y);
+    const isBackground = shouldTreatAsBackground(luminance[pixelIndex], hsv, edge.magnitude);
+    const isInk = !isBackground && shouldKeepAsInk(luminance[pixelIndex], hsv, edge.magnitude);
+    const value = isInk ? 0 : 255;
+
+    // 输出帧只保留黑白两类像素，后续 ASCII 映射自然会把背景变成空格。
+    outputData[dataIndex] = value;
+    outputData[dataIndex + 1] = value;
+    outputData[dataIndex + 2] = value;
+    outputData[dataIndex + 3] = 255;
+  }
+
+  return {
+    width: frame.width,
+    height: frame.height,
+    data: outputData,
+  };
 }
 
 // selectBrightnessCharacter 函数：把 0-255 亮度映射成字符集中的一个具体字符。
@@ -258,8 +381,11 @@ export function convertFrameToAscii(frame: ImageFrame, inputOptions: AsciiOption
 
   validateImageFrame(frame);
 
+  const conversionFrame = options.preprocessEnabled ? createPreprocessedLineArtFrame(frame) : frame;
+
   // 当前帧已经由主线程按目标列数缩放，因此这里以 frame.width/frame.height 作为最终尺寸。
-  const text = options.mode === 'edge' ? convertEdgesToAscii(frame, options) : convertBrightnessToAscii(frame, options);
+  const text =
+    options.mode === 'edge' ? convertEdgesToAscii(conversionFrame, options) : convertBrightnessToAscii(conversionFrame, options);
   const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
 
   return {

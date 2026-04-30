@@ -5,7 +5,9 @@ import {
   convertBrightnessToAscii,
   convertEdgesToAscii,
   convertFrameToAscii,
+  createPreprocessedLineArtFrame,
   mapEdgeAngleToCharacter,
+  normalizeAsciiOptions,
   selectBrightnessCharacter,
 } from './convert';
 import type { ImageFrame } from './types';
@@ -33,6 +35,19 @@ function repeatPixel(count: number, pixel: [number, number, number, number]): Ar
 }
 
 describe('ASCII 转换核心', () => {
+  it('默认关闭线稿预处理', () => {
+    expect(DEFAULT_ASCII_OPTIONS.preprocessEnabled).toBe(false);
+  });
+
+  it('参数规整会保留线稿预处理开关状态', () => {
+    const normalizedOptions = normalizeAsciiOptions({
+      ...DEFAULT_ASCII_OPTIONS,
+      preprocessEnabled: false,
+    });
+
+    expect(normalizedOptions.preprocessEnabled).toBe(false);
+  });
+
   it('按亮度把黑色映射到高密度字符，白色映射到低密度字符', () => {
     expect(selectBrightnessCharacter(0, ' .#', false, 1, 1)).toBe('#');
     expect(selectBrightnessCharacter(255, ' .#', false, 1, 1)).toBe(' ');
@@ -47,6 +62,7 @@ describe('ASCII 转换核心', () => {
     const frame = createFrame(1, 1, [[0, 0, 0, 0]]);
     const text = convertBrightnessToAscii(frame, {
       ...DEFAULT_ASCII_OPTIONS,
+      preprocessEnabled: false,
       characterSet: 'simple',
     });
 
@@ -87,6 +103,79 @@ describe('ASCII 转换核心', () => {
     });
 
     expect(text).toContain('|');
+  });
+
+  it('线稿预处理会把绿色背景压成白色空白', () => {
+    const frame = createFrame(1, 1, [[120, 170, 72, 255]]);
+    const result = convertFrameToAscii(frame, {
+      ...DEFAULT_ASCII_OPTIONS,
+      preprocessEnabled: true,
+      characterSet: 'simple',
+      quality: 'low',
+    });
+
+    expect(result.text).toBe(' ');
+  });
+
+  it('线稿预处理会保留深色轮廓像素', () => {
+    const frame = createFrame(3, 3, [
+      [120, 170, 72, 255],
+      [120, 170, 72, 255],
+      [120, 170, 72, 255],
+      [120, 170, 72, 255],
+      [12, 12, 12, 255],
+      [120, 170, 72, 255],
+      [120, 170, 72, 255],
+      [120, 170, 72, 255],
+      [120, 170, 72, 255],
+    ]);
+    const preprocessedFrame = createPreprocessedLineArtFrame(frame);
+    const centerIndex = (1 * 3 + 1) * 4;
+    const cornerIndex = 0;
+
+    expect(preprocessedFrame.data[centerIndex]).toBe(0);
+    expect(preprocessedFrame.data[cornerIndex]).toBe(255);
+  });
+
+  it('关闭线稿预处理时保留原有灰度映射效果', () => {
+    const frame = createFrame(1, 1, [[120, 170, 72, 255]]);
+    const result = convertFrameToAscii(frame, {
+      ...DEFAULT_ASCII_OPTIONS,
+      preprocessEnabled: false,
+      characterSet: 'simple',
+      quality: 'low',
+    });
+
+    expect(result.text).not.toBe(' ');
+  });
+
+  it('轮廓模式开启线稿预处理后仍能识别竖向边缘', () => {
+    const frame = createFrame(5, 5, [
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      [0, 0, 0, 255],
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      [0, 0, 0, 255],
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      [0, 0, 0, 255],
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      [0, 0, 0, 255],
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      ...repeatPixel(2, [255, 255, 255, 255]),
+      [0, 0, 0, 255],
+      ...repeatPixel(2, [255, 255, 255, 255]),
+    ]);
+    const result = convertFrameToAscii(frame, {
+      ...DEFAULT_ASCII_OPTIONS,
+      mode: 'edge',
+      preprocessEnabled: true,
+      quality: 'high',
+      edgeThreshold: 8,
+    });
+
+    expect(result.text).toContain('|');
   });
 
   it('Sobel 方向映射能覆盖水平、竖直和斜向字符', () => {

@@ -78,6 +78,41 @@ describe('App', () => {
     expect(mockedStartAsciiConversion).toHaveBeenCalled();
   });
 
+  it('页面不再渲染顶部标题区内容', () => {
+    render(<App />);
+
+    expect(screen.queryByText('ASCII 字符画生成器')).not.toBeInTheDocument();
+    expect(screen.queryByText('本地转换')).not.toBeInTheDocument();
+    expect(screen.queryByText('无上传')).not.toBeInTheDocument();
+  });
+
+  it('预处理线稿实验性开关默认不勾选', () => {
+    render(<App />);
+
+    expect(screen.getByRole('checkbox', { name: '预处理线稿（实验性）' })).not.toBeChecked();
+  });
+
+  it('勾选预处理后会把开启状态传给 Worker 转换', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '预处理线稿（实验性）' }));
+    fireEvent.change(screen.getByLabelText('选择图片'), {
+      target: {
+        files: [createTestImageFile()],
+      },
+    });
+
+    await waitFor(
+      () => {
+        expect(mockedStartAsciiConversion).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ preprocessEnabled: true }),
+        );
+      },
+      { timeout: 1200 },
+    );
+  });
+
   it('复制按钮会把当前字符画文本写入剪贴板', async () => {
     render(<App />);
 

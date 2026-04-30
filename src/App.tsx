@@ -251,14 +251,6 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div>
-          <p className="eyebrow">本地转换</p>
-          <h1>ASCII 字符画生成器</h1>
-        </div>
-        <span className="privacy-pill">无上传</span>
-      </header>
-
       <main className="workspace">
         <aside className="control-column" aria-label="转换设置">
           <section className="tool-panel upload-panel" aria-labelledby="upload-title">
@@ -305,6 +297,15 @@ export default function App() {
                 参数
               </h2>
             </div>
+
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={options.preprocessEnabled}
+                onChange={(event) => updateOptions({ preprocessEnabled: event.target.checked })}
+              />
+              <span>预处理线稿（实验性）</span>
+            </label>
 
             <div className="field-group">
               <span className="field-label">模式</span>

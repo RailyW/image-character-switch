@@ -24,6 +24,7 @@ export interface AsciiOptions {
   columns: number;
   quality: AsciiQuality;
   inverted: boolean;
+  preprocessEnabled: boolean;
   characterSet: CharacterSetKey;
   edgeThreshold: number;
 }

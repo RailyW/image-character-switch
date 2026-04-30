@@ -18,6 +18,7 @@ export const DEFAULT_ASCII_OPTIONS: AsciiOptions = {
   columns: 100,
   quality: 'standard',
   inverted: false,
+  preprocessEnabled: false,
   characterSet: 'standard',
   edgeThreshold: 36,
 };
