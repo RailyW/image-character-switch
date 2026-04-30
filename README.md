@@ -23,6 +23,7 @@ npm run dev
 ```bash
 npm test
 npm run build
+npm run build:github-pages
 ```
 
 ## 部署
@@ -36,8 +37,10 @@ Cloudflare Pages 推荐配置：
 
 GitHub Pages 推荐配置：
 
-- 先运行 `npm run build`
-- 将 `dist/` 作为静态站点产物发布
+- 已内置 `.github/workflows/deploy-pages.yml`
+- 每次推送到 `main` 时自动运行 `npm run build:github-pages`
+- GitHub Pages 项目站点会使用 `/image-character-switch/` 作为资源基础路径
+- 仓库 Pages Source 需要设置为 GitHub Actions
 
 ## 目录结构
 
